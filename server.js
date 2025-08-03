@@ -8,7 +8,7 @@ const fs = require('fs');
 const app = express();
 const upload = multer({ dest: 'uploads/' });
 
-const APTRA_URL = process.env.APTRA_URL || 'https://vision.dcs.latam.ncr.com';
+const APTRA_URL = process.env.APTRA_URL || 'https://vision.dcs.latam.ncr.com/cxp-core';
 const PORT = process.env.PORT || 3000;
 
 app.use(express.static(path.join(__dirname, 'public')));
