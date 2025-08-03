@@ -1,6 +1,6 @@
 const express = require('express');
 const multer = require('multer');
-const XLSX = require('xlsx');
+const ExcelJS = require('exceljs');
 const puppeteer = require('puppeteer');
 const path = require('path');
 const fs = require('fs');
@@ -20,10 +20,25 @@ app.post('/upload', upload.single('excel'), async (req, res) => {
       return res.status(400).send('Faltan archivo Excel, usuario o contraseña');
     }
 
-    const workbook = XLSX.readFile(req.file.path);
-    const sheetName = workbook.SheetNames[0];
-    const sheet = workbook.Sheets[sheetName];
-    const data = XLSX.utils.sheet_to_json(sheet);
+    if (req.file.size > 5 * 1024 * 1024) {
+      return res.status(400).send('Archivo demasiado grande');
+    }
+    if (!req.file.originalname.match(/\.(xlsx|xls)$/i)) {
+      return res.status(400).send('Formato de archivo no válido');
+    }
+
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.readFile(req.file.path);
+    const worksheet = workbook.getWorksheet(1);
+    const data = [];
+    worksheet.eachRow({ includeEmpty: false }, (row) => {
+      data.push({
+        ID: row.getCell(1).value,
+        Status: row.getCell(2).value,
+        Fecha: row.getCell(3).value,
+        Hora: row.getCell(4).value
+      });
+    });
 
     const browser = await puppeteer.launch({
       headless: true,
