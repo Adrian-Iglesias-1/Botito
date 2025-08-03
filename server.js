@@ -48,28 +48,31 @@ app.post('/upload', upload.single('excel'), async (req, res) => {
 
     try {
       await page.goto(`${APTRA_URL}/login`, { waitUntil: 'networkidle2' });
+      console.log('Intentando iniciar sesión');
       await page.type('#username', username);
       await page.type('#password', password);
       await page.click('#login-button');
-      await page.waitForNavigation();
+      await page.waitForSelector('#dashboard', { timeout: 10000 }); // Ajusta selector de dashboard
+      console.log('Sesión iniciada');
 
       for (const row of data) {
         const { ID, Status, Fecha, Hora } = row;
         if (!ID || !Status || !Fecha || !Hora) {
-          console.log(`Fila incompleta para ID: ${ID}`);
+          console.log(`Fila incompleta para ID: ${ID || 'desconocido'}`);
           continue;
         }
 
+        console.log(`Procesando ID: ${ID}`);
         await page.goto(`${APTRA_URL}/search`, { waitUntil: 'networkidle2' });
         await page.type('#search-id', ID.toString());
         await page.click('#search-button');
-        await page.waitForSelector('#results', { timeout: 5000 });
+        await page.waitForSelector('#results', { timeout: 10000 });
 
-        await page.type('#status-field', Status);
-        await page.type('#date-field', Fecha);
-        await page.type('#time-field', Hora);
+        await page.type('#status-field', Status.toString());
+        await page.type('#date-field', Fecha.toString());
+        await page.type('#time-field', Hora.toString());
         await page.click('#create-event-button');
-        await page.waitForSelector('#confirmation', { timeout: 5000 });
+        await page.waitForSelector('#confirmation', { timeout: 10000 });
         console.log(`Evento creado para ID: ${ID}`);
       }
 
@@ -77,11 +80,13 @@ app.post('/upload', upload.single('excel'), async (req, res) => {
       fs.unlinkSync(req.file.path);
       res.send('Procesamiento completado exitosamente');
     } catch (error) {
+      console.error(`Error en el flujo: ${error.message}`);
       await browser.close();
       fs.unlinkSync(req.file.path);
       res.status(500).send(`Error en el procesamiento: ${error.message}`);
     }
   } catch (error) {
+    console.error(`Error general: ${error.message}`);
     res.status(500).send(`Error: ${error.message}`);
   }
 });
