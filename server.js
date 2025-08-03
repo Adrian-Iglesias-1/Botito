@@ -8,12 +8,14 @@ const fs = require('fs');
 const app = express();
 const upload = multer({ dest: 'uploads/' });
 
-const APTRA_URL = process.env.APTRA_URL || 'https://aptra-url.com';
+const APTRA_URL = process.env.APTRA_URL || 'https://vision.dcs.latam.ncr.com';
 const PORT = process.env.PORT || 3000;
 
 app.use(express.static(path.join(__dirname, 'public')));
 
 app.post('/upload', upload.single('excel'), async (req, res) => {
+  console.log('req.body:', req.body);
+  console.log('req.file:', req.file);
   try {
     const { username, password } = req.body;
     if (!req.file || !username || !password) {
