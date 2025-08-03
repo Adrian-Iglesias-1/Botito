@@ -4,16 +4,17 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import childProcess from 'child_process';
-import {accessSync} from 'fs';
-import os from 'os';
-import readline from 'readline';
+import childProcess from 'node:child_process';
+import {accessSync} from 'node:fs';
+import os from 'node:os';
+import readline from 'node:readline';
 
 import {
   type Browser,
   type BrowserPlatform,
   resolveSystemExecutablePath,
   type ChromeReleaseChannel,
+  executablePathByBrowser,
 } from './browser-data/browser-data.js';
 import {Cache} from './Cache.js';
 import {debug} from './debug.js';
@@ -27,8 +28,11 @@ const debugLaunch = debug('puppeteer:browsers:launcher');
 export interface ComputeExecutablePathOptions {
   /**
    * Root path to the storage directory.
+   *
+   * Can be set to `null` if the executable path should be relative
+   * to the extracted download location. E.g. `./chrome-linux64/chrome`.
    */
-  cacheDir: string;
+  cacheDir: string | null;
   /**
    * Determines which platform the browser will be suited for.
    *
@@ -50,8 +54,21 @@ export interface ComputeExecutablePathOptions {
  * @public
  */
 export function computeExecutablePath(
-  options: ComputeExecutablePathOptions
+  options: ComputeExecutablePathOptions,
 ): string {
+  if (options.cacheDir === null) {
+    options.platform ??= detectBrowserPlatform();
+    if (options.platform === undefined) {
+      throw new Error(
+        `No platform specified. Couldn't auto-detect browser platform.`,
+      );
+    }
+    return executablePathByBrowser[options.browser](
+      options.platform,
+      options.buildId,
+    );
+  }
+
   return new Cache(options.cacheDir).computeExecutablePath(options);
 }
 
@@ -76,25 +93,30 @@ export interface SystemOptions {
 }
 
 /**
+ * Returns a path to a system-wide Chrome installation given a release channel
+ * name by checking known installation locations (using
+ * https://pptr.dev/browsers-api/browsers.computesystemexecutablepath/). If
+ * Chrome instance is not found at the expected path, an error is thrown.
+ *
  * @public
  */
 export function computeSystemExecutablePath(options: SystemOptions): string {
   options.platform ??= detectBrowserPlatform();
   if (!options.platform) {
     throw new Error(
-      `Cannot download a binary for the provided platform: ${os.platform()} (${os.arch()})`
+      `Cannot download a binary for the provided platform: ${os.platform()} (${os.arch()})`,
     );
   }
   const path = resolveSystemExecutablePath(
     options.browser,
     options.platform,
-    options.channel
+    options.channel,
   );
   try {
     accessSync(path);
-  } catch (error) {
+  } catch {
     throw new Error(
-      `Could not find Google Chrome executable for channel '${options.channel}' at '${path}'.`
+      `Could not find Google Chrome executable for channel '${options.channel}' at '${path}'.`,
     );
   }
   return path;
@@ -104,19 +126,69 @@ export function computeSystemExecutablePath(options: SystemOptions): string {
  * @public
  */
 export interface LaunchOptions {
+  /**
+   * Absolute path to the browser's executable.
+   */
   executablePath: string;
+  /**
+   * Configures stdio streams to open two additional streams for automation over
+   * those streams instead of WebSocket.
+   *
+   * @defaultValue `false`.
+   */
   pipe?: boolean;
+  /**
+   * If true, forwards the browser's process stdout and stderr to the Node's
+   * process stdout and stderr.
+   *
+   * @defaultValue `false`.
+   */
   dumpio?: boolean;
+  /**
+   * Additional arguments to pass to the executable when launching.
+   */
   args?: string[];
+  /**
+   * Environment variables to set for the browser process.
+   */
   env?: Record<string, string | undefined>;
+  /**
+   * Handles SIGINT in the Node process and tries to kill the browser process.
+   *
+   * @defaultValue `true`.
+   */
   handleSIGINT?: boolean;
+  /**
+   * Handles SIGTERM in the Node process and tries to gracefully close the browser
+   * process.
+   *
+   * @defaultValue `true`.
+   */
   handleSIGTERM?: boolean;
+  /**
+   * Handles SIGHUP in the Node process and tries to gracefully close the browser process.
+   *
+   * @defaultValue `true`.
+   */
   handleSIGHUP?: boolean;
+  /**
+   * Whether to spawn process in the {@link https://nodejs.org/api/child_process.html#optionsdetached | detached}
+   * mode.
+   *
+   * @defaultValue `true` except on Windows.
+   */
   detached?: boolean;
+  /**
+   * A callback to run after the browser process exits or before the process
+   * will be closed via the {@link Process.close} call (including when handling
+   * signals). The callback is only run once.
+   */
   onExit?: () => Promise<void>;
 }
 
 /**
+ * Launches a browser process according to {@link LaunchOptions}.
+ *
  * @public
  */
 export function launch(opts: LaunchOptions): Process {
@@ -162,7 +234,7 @@ const dispatchers = {
 
 function subscribeToProcessEvent(
   event: 'exit' | 'SIGINT' | 'SIGHUP' | 'SIGTERM',
-  handler: EventHandler
+  handler: EventHandler,
 ): void {
   const listeners = processListeners.get(event) || [];
   if (listeners.length === 0) {
@@ -174,7 +246,7 @@ function subscribeToProcessEvent(
 
 function unsubscribeFromProcessEvent(
   event: 'exit' | 'SIGINT' | 'SIGHUP' | 'SIGTERM',
-  handler: EventHandler
+  handler: EventHandler,
 ): void {
   const listeners = processListeners.get(event) || [];
   const existingListenerIdx = listeners.indexOf(handler);
@@ -234,7 +306,7 @@ export class Process {
           }
           return res;
         },
-        {}
+        {},
       ),
       stdio,
     });
@@ -246,7 +318,7 @@ export class Process {
         detached: opts.detached,
         env,
         stdio,
-      }
+      },
     );
 
     debugLaunch(`Launched ${this.#browserProcess.pid}`);
@@ -364,12 +436,12 @@ export class Process {
         if (process.platform === 'win32') {
           try {
             childProcess.execSync(
-              `taskkill /pid ${this.#browserProcess.pid} /T /F`
+              `taskkill /pid ${this.#browserProcess.pid} /T /F`,
             );
           } catch (error) {
             debugLaunch(
               `Killing ${this.#browserProcess.pid} using taskkill failed`,
-              error
+              error,
             );
             // taskkill can fail to kill the process e.g. due to missing permissions.
             // Let's kill the process via Node API. This delays killing of all child
@@ -386,7 +458,7 @@ export class Process {
           } catch (error) {
             debugLaunch(
               `Killing ${this.#browserProcess.pid} using process.kill failed`,
-              error
+              error,
             );
             // Killing the process group can fail due e.g. to missing permissions.
             // Let's kill the process via Node API. This delays killing of all child
@@ -398,7 +470,7 @@ export class Process {
         throw new Error(
           `${PROCESS_ERROR_EXPLANATION}\nError cause: ${
             isErrorLike(error) ? error.stack : error
-          }`
+          }`,
         );
       }
     }
@@ -421,11 +493,10 @@ export class Process {
         timeout > 0 ? setTimeout(onTimeout, timeout) : undefined;
 
       const cleanup = (): void => {
-        if (timeoutId) {
-          clearTimeout(timeoutId);
-        }
+        clearTimeout(timeoutId);
         rl.off('line', onLine);
         rl.off('close', onClose);
+        rl.close();
         this.#browserProcess.off('exit', onClose);
         this.#browserProcess.off('error', onClose);
       };
@@ -442,8 +513,8 @@ export class Process {
               '',
               'TROUBLESHOOTING: https://pptr.dev/troubleshooting',
               '',
-            ].join('\n')
-          )
+            ].join('\n'),
+          ),
         );
       }
 
@@ -451,8 +522,8 @@ export class Process {
         cleanup();
         reject(
           new TimeoutError(
-            `Timed out after ${timeout} ms while waiting for the WS endpoint URL to appear in stdout!`
-          )
+            `Timed out after ${timeout} ms while waiting for the WS endpoint URL to appear in stdout!`,
+          ),
         );
       }
 
